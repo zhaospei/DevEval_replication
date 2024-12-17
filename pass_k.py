@@ -285,7 +285,7 @@ def main(args):
             if output['task_id'] in balance_namspaces:
                 balance_tasks.append(output)
         balance_tasks_list.append(balance_tasks)
-    
+    # balance_tasks_list = [balance_tasks[:1] for balance_tasks in balance_tasks_list]
     # print(balance_tasks_list[0][0])
     indexed_data = [(balance_tasks, benchmark_data, args.log_file, args, idx) for idx, balance_tasks in enumerate(balance_tasks_list)]
     with multiprocessing.Pool(processes=len(balance_tasks_list)) as pool:
@@ -327,7 +327,7 @@ def main(args):
             # output['Result'] = flag
             # f.write(json.dumps(output) + '\n')
             # f.flush()
-    output_file = args.output_file.replace('.parquet', '_label.parquet')
+    output_file = str(args.output_file).replace('.parquet', '_label.parquet')
     results = pd.DataFrame(dict_list_results)
     # results['cleaned_code'] = cleaned_code_list
     results.to_parquet(output_file)
