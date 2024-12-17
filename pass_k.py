@@ -206,16 +206,17 @@ def balanced_split_tuples(data, n_parts=8):
 
 
 def process_sublist_output(args):
-    sublist, benchmark_data, log_file, idx = args  # Unpack the sublist and its index
+    sublist, benchmark_data, log_file, input_args, idx = args  # Unpack the sublist and its index
     processed_elements = []
-    log_file = log_file.replace('.jsonl', f'_{idx}.jsonl')
+    log_file = str(log_file).replace('.jsonl', f'_{idx}.jsonl')
     output_f = open(log_file, 'w')
-    with tqdm(total=len(sublist), desc=f"[{idx}]", position=1, leave=False) as pbar:
+    with tqdm(total=len(sublist), desc=f"[{idx}]", position=idx, leave=False) as pbar:
+        current, total = 0, 0
         for output in sublist:
             if output['task_id'] in benchmark_data:
                 data = benchmark_data[output['task_id']]
                 data['completion'] = output['cleaned_code']
-                flag = check_correctness(args, data)
+                flag = check_correctness(input_args, data)
                 if flag != 'Pass':
                     label = 0
                 else:
@@ -229,6 +230,8 @@ def process_sublist_output(args):
                 }
                 output_f.write(json.dumps(js) + '\n')
                 pbar.set_description(f'[{idx}: {current} / {total}]')
+                pbar.update(1)
+            
     
     return sublist            
 
@@ -263,7 +266,7 @@ def main(args):
     
     project_counts = [(cnt, namespace) for namespace, cnt in project_counts.items()]
     # project_counts = list(project_counts.items()) 
-    print(project_counts)
+    # print(project_counts)
     balance_projects_list = balanced_split_tuples(project_counts)
     
     balance_namspaces_list = []
@@ -282,9 +285,9 @@ def main(args):
             if output['task_id'] in balance_namspaces:
                 balance_tasks.append(output)
         balance_tasks_list.append(balance_tasks)
-
+    
     # print(balance_tasks_list[0][0])
-    indexed_data = [(balance_tasks, benchmark_data, args.log_file, idx) for idx, balance_tasks in enumerate(balance_tasks_list)]
+    indexed_data = [(balance_tasks, benchmark_data, args.log_file, args, idx) for idx, balance_tasks in enumerate(balance_tasks_list)]
     with multiprocessing.Pool(processes=len(balance_tasks_list)) as pool:
         # Process each sublist in parallel and display overall progress
         results = list(
