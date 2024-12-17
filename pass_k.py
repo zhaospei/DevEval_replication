@@ -5,12 +5,14 @@ import psutil
 from subprocess import run
 from tqdm import tqdm
 import os
+import heapq
 import numpy as np
+import pandas as pd
 from argparse import ArgumentParser
 import textwrap
 from func_timeout import func_set_timeout
 import func_timeout
-
+import multiprocessing
 
 def get_parser():
     parser = ArgumentParser()
@@ -18,6 +20,7 @@ def get_parser():
     parser.add_argument('--log_file', type=Path)
     parser.add_argument('--source_code_root', type=Path, default=Path('Source_Code'))
     parser.add_argument('--data_file', type=Path, default=Path('data.jsonl')) # data.jsonl
+    parser.add_argument('--num_proc', type=int, default=8)
     parser.add_argument('--k', type=str, default='1,3,5,10') # k in pass_at_k
     parser.add_argument('--n', type=int, default=1) # number of completions per task
     return parser.parse_args()
@@ -166,43 +169,166 @@ def load_finished_data(args):
                 finished_data[namespace].add(completion)
     return finished_data
 
+def balanced_split_tuples(data, n_parts=8):
+    """
+    Split a list of tuples (number, namespace) into `n_parts` sub-lists 
+    minimizing the difference between the max and min sum of numbers in each sub-list.
+    """
+    # Sort tuples by the number in descending order
+    data.sort(key=lambda x: x[0], reverse=True)
+    
+    # Initialize sub-lists and their corresponding sums
+    sub_lists = [[] for _ in range(n_parts)]
+    sub_sums = [0] * n_parts
+    
+    # Use a heap to track the smallest sums
+    heap = [(0, i) for i in range(n_parts)]
+    heapq.heapify(heap)
+    
+    for num, namespace in data:
+        # Pop the sub-list with the smallest sum
+        current_sum, index = heapq.heappop(heap)
+        
+        # Assign the current tuple to this sub-list
+        sub_lists[index].append((num, namespace))
+        sub_sums[index] += num
+        
+        # Push the updated sum back to the heap
+        heapq.heappush(heap, (sub_sums[index], index))
+    
+    # Calculate the difference between max and min sums
+    min_sum = min(sub_sums)
+    max_sum = max(sub_sums)
+    diff = max_sum - min_sum
+    print(f'{min_sum} {max_sum} {diff}')
+    
+    return sub_lists
+
+
+def process_sublist_output(args):
+    sublist, benchmark_data, log_file, idx = args  # Unpack the sublist and its index
+    processed_elements = []
+    log_file = log_file.replace('.jsonl', f'_{idx}.jsonl')
+    output_f = open(log_file, 'w')
+    with tqdm(total=len(sublist), desc=f"[{idx}]", position=1, leave=False) as pbar:
+        for output in sublist:
+            if output['task_id'] in benchmark_data:
+                data = benchmark_data[output['task_id']]
+                data['completion'] = output['cleaned_code']
+                flag = check_correctness(args, data)
+                if flag != 'Pass':
+                    label = 0
+                else:
+                    label = 1
+                    current += 1
+                output['label'] = label
+                total += 1
+                js = {
+                    'completion_id': output['completion_id'],
+                    'label': label
+                }
+                output_f.write(json.dumps(js) + '\n')
+                pbar.set_description(f'[{idx}: {current} / {total}]')
+    
+    return sublist            
 
 def main(args):
-    finished_data = load_finished_data(args)
+    # finished_data = load_finished_data(args)
 
-    todo_output_data = []
-    with open(args.output_file, 'r') as f:
-        for line in f:
-            js = json.loads(line)
-            namespace, completion = js['namespace'], js['completion']
-            if namespace not in finished_data:
-                todo_output_data.append(js)
-                finished_data[namespace] = set()
-                finished_data[namespace].add(completion)
-            elif completion not in finished_data[namespace]: 
-                todo_output_data.append(js)
-                finished_data[namespace].add(completion)         
-    del finished_data
+    # todo_output_data = []
+    todo_output_data = pd.read_parquet(args.output_file).to_dict(orient='records')
+    # with open(args.output_file, 'r') as f:
+    # for line in sequences:
+    #     # js = json.loads(line)
+    #     namespace, completion = line['namespace'], js['completion']
+    #     if namespace not in finished_data:
+    #         todo_output_data.append(js)
+    #         finished_data[namespace] = set()
+    #         finished_data[namespace].add(completion)
+    #     elif completion not in finished_data[namespace]: 
+    #         todo_output_data.append(js)
+    #         finished_data[namespace].add(completion)         
+    # del finished_data
     print("TODO Completions: ", len(todo_output_data))
     
     benchmark_data = {}
+    project_counts = {}
     with open(args.data_file, 'r') as f:
         for line in f:
             js = json.loads(line)
             namespace = js['namespace']
+            ns = js['project_path']
+            project_counts[ns] = project_counts.get(ns, 0) + 1
             benchmark_data[namespace] = js
+    
+    project_counts = [(cnt, namespace) for namespace, cnt in project_counts.items()]
+    # project_counts = list(project_counts.items()) 
+    print(project_counts)
+    balance_projects_list = balanced_split_tuples(project_counts)
+    
+    balance_namspaces_list = []
+    for balance_projects in balance_projects_list:
+        balance_namespaces = []
+        for _, project_path in balance_projects:
+            for namespace, js in benchmark_data.items():
+                if js['project_path'] == project_path:
+                    balance_namespaces.append(namespace)
+        balance_namspaces_list.append(balance_namespaces)
+    
+    balance_tasks_list = []
+    for balance_namspaces in balance_namspaces_list:
+        balance_tasks = []
+        for output in todo_output_data:
+            if output['task_id'] in balance_namspaces:
+                balance_tasks.append(output)
+        balance_tasks_list.append(balance_tasks)
 
-    with open(args.log_file, 'a') as f:
-        for output in tqdm(todo_output_data):
-            if output['namespace'] in benchmark_data:
-                data = benchmark_data[output['namespace']]
-                data['completion'] = output['completion']
-                flag = check_correctness(args, data)
-                output['Result'] = flag
-                f.write(json.dumps(output) + '\n')
-                f.flush()
-
-    report_results(args, benchmark_data)
+    # print(balance_tasks_list[0][0])
+    indexed_data = [(balance_tasks, benchmark_data, args.log_file, idx) for idx, balance_tasks in enumerate(balance_tasks_list)]
+    with multiprocessing.Pool(processes=len(balance_tasks_list)) as pool:
+        # Process each sublist in parallel and display overall progress
+        results = list(
+            tqdm(
+                pool.imap(process_sublist_output, indexed_data), 
+                total=len(balance_tasks_list), 
+                desc="Processing Testing Pipeline", 
+                position=0
+            )
+        )
+    
+    dict_list_results = []
+    for result in results:
+        dict_list_results.extend(result)
+    
+    # for balance_tasks in balance_tasks_list:
+    #     print(len(balance_tasks))
+    # balance_tasks_list
+    
+    # current, total = 0, 0
+    # for output in tqdm(todo_output_data):
+    #     if output['task_id'] in benchmark_data:
+    #         data = benchmark_data[output['task_id']]
+    #         data['completion'] = output['cleaned_code']
+    #         flag = check_correctness(args, data)
+    #         if flag != 'Pass':
+    #             output['label'] = 0
+    #         else:
+    #             output['label'] = 1
+    #             current += 1
+    #         total += 1
+    #         print(f'{current} / {total}')
+        
+    #     else:
+    #         print(f"Have error on {output['completion_id']}")
+            
+            # output['Result'] = flag
+            # f.write(json.dumps(output) + '\n')
+            # f.flush()
+    output_file = args.output_file.replace('.parquet', '_label.parquet')
+    results = pd.DataFrame(dict_list_results)
+    # results['cleaned_code'] = cleaned_code_list
+    results.to_parquet(output_file)
+    # report_results(args, benchmark_data)
 
 
 def test_ground_truth(args):
