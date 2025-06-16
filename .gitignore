@@ -3,3 +3,6 @@ Source_Code_env/*
 logs/
 Generations
 Datasets
+*.parquet
+*.ipynb
+Source_Code.tar.gz
