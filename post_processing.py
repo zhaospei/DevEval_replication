@@ -14,7 +14,7 @@ def get_parser():
     parser.add_argument('--model_type', type=str) 
     parser.add_argument('--completion_file', type=str) 
     parser.add_argument('--output_file', type=str)
-    parser.add_argument('--data_file', type=str, default='/drive2/tuandung/DevEval/data_clean.jsonl')
+    parser.add_argument('--data_file', type=str, default='data_clean.jsonl')
     return parser
 
 args = get_parser().parse_args()
