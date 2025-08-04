@@ -17,8 +17,8 @@ import multiprocessing
 def get_parser():
     parser = ArgumentParser()
     parser.add_argument('--output_file', type=Path)
-    parser.add_argument('--log_file', type=Path)
-    parser.add_argument('--source_code_root', type=Path, default=Path('04_08_Source_Code/Source_Code'))
+    parser.add_argument('--log_file', type=Path, default='log_output.jsonl')
+    parser.add_argument('--source_code_root', type=Path, default=Path('Source_Code'))
     parser.add_argument('--data_file', type=Path, default=Path('data.jsonl')) # data.jsonl
     parser.add_argument('--num_proc', type=int, default=8)
     parser.add_argument('--k', type=str, default='1,3,5,10') # k in pass_at_k
@@ -49,8 +49,10 @@ def execution_tests(args, data):
                     process.wait()
                     return 'OOM', '', '' # Out of Memory
                 stdout, stderr = process.communicate()
-                stdout = stdout.decode('utf-8')
-                stderr = stderr.decode('utf-8')
+                stdout = stdout.decode('utf-8', errors='replace')
+                stderr = stderr.decode('utf-8', errors='replace')
+                stdout = stdout.encode('unicode_escape').decode('utf-8')
+                stderr = stderr.encode('unicode_escape').decode('utf-8')
                 return_code = process.poll()
                 if return_code is not None:
                     if return_code != 0:
@@ -65,8 +67,10 @@ def execution_tests(args, data):
                         break
         except Exception as e:
             stdout, stderr = process.communicate()
-            stdout = stdout.decode('utf-8')
-            stderr = stderr.decode('utf-8')
+            stdout = stdout.decode('utf-8', errors='replace')
+            stderr = stderr.decode('utf-8', errors='replace')
+            stdout = stdout.encode('unicode_escape').decode('utf-8')
+            stderr = stderr.encode('unicode_escape').decode('utf-8')
             process.terminate()
             process.wait()
             return 'Error', stdout, e # Other Error
@@ -253,7 +257,7 @@ def process_sublist_output(args):
                     'flag': flag,
                     'compilable_label': compilable_label,
                 }
-                output_f.write(json.dumps(js) + '\n')
+                output_f.write(json.dumps(js, ensure_ascii=False) + '\n')
                 pbar.set_description(f'[{idx}: {current} | {current_compilable} | {total}]')
                 pbar.update(1)
             
@@ -265,6 +269,7 @@ def main(args):
 
     # todo_output_data = []
     todo_output_data = pd.read_parquet(args.output_file).to_dict(orient='records')
+    # todo_output_data  = todo_output_data.head(10)
     # with open(args.output_file, 'r') as f:
     # for line in sequences:
     #     # js = json.loads(line)
