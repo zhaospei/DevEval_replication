@@ -43,7 +43,7 @@ conda create --name DevEval --file environment.txt
 conda activate DevEval
 pip install -r requirement.txt
 # replace the path with your own path
-echo "export NLTK_DATA=/home/user/DevEval/nltk_data" >> ~/.bashrc
+echo "export NLTK_DATA=/home/dungbt/nltk_data" >> ~/.bashrc
 source ~/.bashrc
 ```
 

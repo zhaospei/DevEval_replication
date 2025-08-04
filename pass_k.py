@@ -18,7 +18,7 @@ def get_parser():
     parser = ArgumentParser()
     parser.add_argument('--output_file', type=Path)
     parser.add_argument('--log_file', type=Path)
-    parser.add_argument('--source_code_root', type=Path, default=Path('Source_Code'))
+    parser.add_argument('--source_code_root', type=Path, default=Path('04_08_Source_Code/Source_Code'))
     parser.add_argument('--data_file', type=Path, default=Path('data.jsonl')) # data.jsonl
     parser.add_argument('--num_proc', type=int, default=8)
     parser.add_argument('--k', type=str, default='1,3,5,10') # k in pass_at_k
@@ -47,23 +47,31 @@ def execution_tests(args, data):
                 if process_memory > 5 * 1024 * 1024 * 1024: # 5GB memory usage per test
                     process.terminate()
                     process.wait()
-                    return 'OOM' # Out of Memory
+                    return 'OOM', '', '' # Out of Memory
+                stdout, stderr = process.communicate()
+                stdout = stdout.decode('utf-8')
+                stderr = stderr.decode('utf-8')
                 return_code = process.poll()
                 if return_code is not None:
                     if return_code != 0:
+                        print(stdout)
+                        print(stderr)
                         process.terminate()
                         process.wait()
-                        return 'Error' # Execution Error
+                        return 'Error', stdout, stderr # Execution Error
                     else:
                         break
         except Exception as e:
+            stdout, stderr = process.communicate()
+            stdout = stdout.decode('utf-8')
+            stderr = stderr.decode('utf-8')
             process.terminate()
             process.wait()
-            return 'Error' # Other Error
+            return 'Error', stdout, e # Other Error
         finally:
             process.terminate()
             process.wait()
-    return 'Pass' # Pass
+    return 'Pass', '', '' # Pass
 
 
 def compute_pass_at_k(n, c, k):
@@ -107,16 +115,17 @@ def TearDown_evaluation(args, data):
 def check_correctness(args, data):
     completion = data['completion']
     if completion == "    pass\n":
-        return 'Error'
+        return 'Error', '', ''  # Skip empty completions
     completion = adjust_indent(completion, data['indent'])
     
     SetUp_evaluation(args, data, completion)
     try:
-        flag = execution_tests(args, data)
+        flag, stdout, stderr = execution_tests(args, data)
     except func_timeout.exceptions.FunctionTimedOut:
         flag = 'TimeOut'
+        stdout, stderr = '', ''
     TearDown_evaluation(args, data)
-    return flag
+    return flag, stdout, stderr
 
 
 def report_results(args, benchmark_data):
@@ -212,25 +221,38 @@ def process_sublist_output(args):
     log_file = str(log_file).replace('.jsonl', f'_{idx}.jsonl')
     output_f = open(log_file, 'w')
     with tqdm(total=len(sublist), desc=f"[{idx}]", position=idx, leave=False) as pbar:
-        current, total = 0, 0
+        current, current_compilable, total = 0, 0, 0
         for output in sublist:
             if output['task_id'] in benchmark_data:
                 data = benchmark_data[output['task_id']]
                 data['completion'] = output['cleaned_code']
-                flag = check_correctness(input_args, data)
+                flag, stdout, stderr = check_correctness(input_args, data)
                 if flag != 'Pass':
                     label = 0
+                    if 'AssertionError' in stderr:
+                        compilable_label = 1
+                        current_compilable += 1
+                    else:
+                        compilable_label = 0
                 else:
                     label = 1
+                    compilable_label = 1
                     current += 1
+                    current_compilable += 1
+
                 output['label'] = label
+                output['compilable_label'] = compilable_label
                 total += 1
                 js = {
                     'completion_id': output['completion_id'],
-                    'label': label
+                    'label': label,
+                    'stdout': stdout,
+                    'stderr': stderr,
+                    'flag': flag,
+                    'compilable_label': compilable_label,
                 }
                 output_f.write(json.dumps(js) + '\n')
-                pbar.set_description(f'[{idx}: {current} / {total}]')
+                pbar.set_description(f'[{idx}: {current} | {current_compilable} | {total}]')
                 pbar.update(1)
             
     
@@ -344,11 +366,15 @@ def test_ground_truth(args):
         tests = set(js['tests'])
         js['tests'] = list(tests)
         try:
-            flag = execution_tests(args, js)
+            flag, stdout, stderr = execution_tests(args, js)
         except func_timeout.exceptions.FunctionTimedOut:
             flag = 'TimeOut'
         if flag != 'Pass':
             print(js['namespace'])
+            print(stdout)
+            print(stderr)
+            js['stdout'] = stdout
+            js['stderr'] = stderr
             output_f.write(json.dumps(js) + '\n')
 
 
