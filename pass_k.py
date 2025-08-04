@@ -54,8 +54,10 @@ def execution_tests(args, data):
                 return_code = process.poll()
                 if return_code is not None:
                     if return_code != 0:
-                        print(stdout)
-                        print(stderr)
+                        # print(stderr)
+                        # print("STDERR--------------------------------")
+                        # print(stdout)
+                        # print("STDOUT--------------------------------")
                         process.terminate()
                         process.wait()
                         return 'Error', stdout, stderr # Execution Error
@@ -229,7 +231,7 @@ def process_sublist_output(args):
                 flag, stdout, stderr = check_correctness(input_args, data)
                 if flag != 'Pass':
                     label = 0
-                    if 'AssertionError' in stderr:
+                    if 'AssertionError' in stdout:
                         compilable_label = 1
                         current_compilable += 1
                     else:
@@ -371,8 +373,6 @@ def test_ground_truth(args):
             flag = 'TimeOut'
         if flag != 'Pass':
             print(js['namespace'])
-            print(stdout)
-            print(stderr)
             js['stdout'] = stdout
             js['stderr'] = stderr
             output_f.write(json.dumps(js) + '\n')
