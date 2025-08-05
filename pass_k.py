@@ -44,7 +44,7 @@ def execution_tests(args, data):
                 process_id = process.pid
                 process_memory = psutil.Process(process_id).memory_info().rss
                 
-                if process_memory > 5 * 1024 * 1024 * 1024: # 5GB memory usage per test
+                if process_memory > 1024 * 1024 * 1024: # 5GB memory usage per test
                     process.terminate()
                     process.wait()
                     return 'OOM', '', '' # Out of Memory
