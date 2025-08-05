@@ -17,7 +17,7 @@ import multiprocessing
 def get_parser():
     parser = ArgumentParser()
     parser.add_argument('--output_file', type=Path)
-    parser.add_argument('--log_file', type=Path, default='log_output.jsonl')
+    parser.add_argument('--log_file', type=Path, default='logs/log_output.jsonl')
     parser.add_argument('--source_code_root', type=Path, default=Path('Source_Code'))
     parser.add_argument('--data_file', type=Path, default=Path('data.jsonl')) # data.jsonl
     parser.add_argument('--num_proc', type=int, default=8)
@@ -33,7 +33,7 @@ def adjust_indent(code, new_indent):
     indented_code = textwrap.indent(dedented_code, ' ' * new_indent)
     return indented_code
 
-@func_set_timeout(60)
+@func_set_timeout(10)
 def execution_tests(args, data):
     project_path = os.path.join(args.source_code_root, data['project_path'])
     command = ['python', 'setup.py', 'pytest', '--addopts']
@@ -222,42 +222,53 @@ def balanced_split_tuples(data, n_parts=8):
 
 
 def process_sublist_output(args):
-    sublist, benchmark_data, log_file, input_args, idx = args  # Unpack the sublist and its index
+    sublist, benchmark_data, log_file, input_args, idx, old_result_test = args  # Unpack the sublist and its index
     processed_elements = []
     log_file = str(log_file).replace('.jsonl', f'_{idx}.jsonl')
-    output_f = open(log_file, 'w')
+    output_f = open(log_file, 'a')
     with tqdm(total=len(sublist), desc=f"[{idx}]", position=idx, leave=False) as pbar:
         current, current_compilable, total = 0, 0, 0
         for output in sublist:
             if output['task_id'] in benchmark_data:
-                data = benchmark_data[output['task_id']]
-                data['completion'] = output['cleaned_code']
-                flag, stdout, stderr = check_correctness(input_args, data)
-                if flag != 'Pass':
-                    label = 0
-                    if 'AssertionError' in stdout:
-                        compilable_label = 1
-                        current_compilable += 1
-                    else:
-                        compilable_label = 0
+                if output['completion_id'] in old_result_test:
+                    old_result = old_result_test[output['completion_id']]
+                    output['label'] = old_result['label']
+                    output['compilable_label'] = old_result['compilable_label']
+                    output['stdout'] = old_result['stdout']
+                    output['stderr'] = old_result['stderr']
+                    output['flag'] = old_result['flag']
                 else:
-                    label = 1
-                    compilable_label = 1
-                    current += 1
-                    current_compilable += 1
-
-                output['label'] = label
-                output['compilable_label'] = compilable_label
-                total += 1
-                js = {
-                    'completion_id': output['completion_id'],
-                    'label': label,
-                    'stdout': stdout,
-                    'stderr': stderr,
-                    'flag': flag,
-                    'compilable_label': compilable_label,
-                }
-                output_f.write(json.dumps(js, ensure_ascii=False) + '\n')
+                    data = benchmark_data[output['task_id']]
+                    data['completion'] = output['cleaned_code']
+                    flag, stdout, stderr = check_correctness(input_args, data)
+                    if flag != 'Pass':
+                        label = 0
+                        if 'AssertionError' in stdout:
+                            compilable_label = 1
+                            current_compilable += 1
+                        else:
+                            compilable_label = 0
+                    else:
+                        label = 1
+                        compilable_label = 1
+                        current += 1
+                        current_compilable += 1
+    
+                    output['label'] = label
+                    output['compilable_label'] = compilable_label
+                    output['stdout'] = stdout
+                    output['stderr'] = stderr
+                    output['flag'] = flag
+                    total += 1
+                    js = {
+                        'completion_id': output['completion_id'],
+                        'label': label,
+                        'stdout': stdout,
+                        'stderr': stderr,
+                        'flag': flag,
+                        'compilable_label': compilable_label,
+                    }
+                    output_f.write(json.dumps(js, ensure_ascii=False) + '\n')
                 pbar.set_description(f'[{idx}: {current} | {current_compilable} | {total}]')
                 pbar.update(1)
             
@@ -283,7 +294,17 @@ def main(args):
     #         finished_data[namespace].add(completion)         
     # del finished_data
     print("TODO Completions: ", len(todo_output_data))
-    
+
+    old_result_test = {}
+    for idx in range(8):
+        old_log_file = str(args.log_file).replace('.jsonl', f'_{idx}.jsonl')
+        with open(old_log_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                data = json.loads(line)
+                if data['completion_id'] in old_result_test:
+                    raise ValueError('Same completion_id found')
+                old_result_test[data['completion_id']] = data
+
     benchmark_data = {}
     project_counts = {}
     with open(args.data_file, 'r') as f:
@@ -317,7 +338,7 @@ def main(args):
         balance_tasks_list.append(balance_tasks)
     # balance_tasks_list = [balance_tasks[:1] for balance_tasks in balance_tasks_list]
     # print(balance_tasks_list[0][0])
-    indexed_data = [(balance_tasks, benchmark_data, args.log_file, args, idx) for idx, balance_tasks in enumerate(balance_tasks_list)]
+    indexed_data = [(balance_tasks, benchmark_data, args.log_file, args, idx, old_result_test) for idx, balance_tasks in enumerate(balance_tasks_list)]
     with multiprocessing.Pool(processes=len(balance_tasks_list)) as pool:
         # Process each sublist in parallel and display overall progress
         results = list(
